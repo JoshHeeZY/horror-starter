@@ -35,6 +35,10 @@ public class PlayerController : MonoBehaviour
     [Header("References")]
     [SerializeField] private Transform cameraTransform;
     public Transform CameraTransform => cameraTransform;
+    [SerializeField] private FPSArmsController armsController;
+
+    [Header("Jump")]
+    [SerializeField] private float jumpHeight = 1.5f;
 
     [Header("Gravity")]
     [SerializeField] private float gravity = -9.81f;
@@ -44,16 +48,25 @@ public class PlayerController : MonoBehaviour
     private InputAction lookAction;
     private InputAction sprintAction;
     private InputAction pauseAction;
+    private InputAction jumpAction;
 
     private float pitchAngle = 0f;
     private float verticalVelocity = 0f;
     private float bobTimer = 0f;
     private Vector3 cameraBaseLocalPosition;
 
+    // Coyote time: remain jump-eligible briefly after leaving ground
+    private const float CoyoteTime = 0.12f;
+    private float coyoteTimer = 0f;
+    private bool wasGrounded = false;
+
     private void Awake()
     {
         characterController = GetComponent<CharacterController>();
         BindActions();
+
+        // Apply saved sensitivity from main menu settings
+        mouseSensitivity = PlayerPrefs.GetFloat("MouseSensitivity", mouseSensitivity);
     }
 
     private void BindActions()
@@ -66,6 +79,7 @@ public class PlayerController : MonoBehaviour
         lookAction   = playerMap.FindAction("Look");
         sprintAction = playerMap.FindAction("Sprint");
         pauseAction  = playerMap.FindAction("Pause");
+        jumpAction   = playerMap.FindAction("Jump", throwIfNotFound: false);
     }
 
     private void OnEnable()
@@ -74,6 +88,7 @@ public class PlayerController : MonoBehaviour
         lookAction?.Enable();
         sprintAction?.Enable();
         pauseAction?.Enable();
+        jumpAction?.Enable();
     }
 
     private void OnDisable()
@@ -82,6 +97,7 @@ public class PlayerController : MonoBehaviour
         lookAction?.Disable();
         sprintAction?.Disable();
         pauseAction?.Disable();
+        jumpAction?.Disable();
     }
 
     private void Start()
@@ -92,13 +108,16 @@ public class PlayerController : MonoBehaviour
 
     private void Update()
     {
+        // Pause must be checked every frame regardless of game state,
+        // otherwise ESC cannot unpause when Time.timeScale == 0.
+        HandlePause();
+
         if (GameManager.Instance != null && GameManager.Instance.CurrentState != GameManager.GameState.Playing)
             return;
 
         HandleLook();
         HandleMovement();
         HandleCameraBob();
-        HandlePause();
     }
 
     private void HandleLook()
@@ -135,13 +154,41 @@ public class PlayerController : MonoBehaviour
         float   speed   = IsSprinting ? SprintSpeed : WalkSpeed;
         Vector3 moveDir = transform.right * moveInput.x + transform.forward * moveInput.y;
 
-        if (characterController.isGrounded)
-            verticalVelocity = -0.5f;
+        bool isGrounded = characterController.isGrounded;
+
+        // Update coyote timer — keeps the player jump-eligible for a brief window
+        // after they leave the ground, fixing the isGrounded flicker on slopes.
+        if (isGrounded)
+        {
+            coyoteTimer  = CoyoteTime;
+            wasGrounded  = true;
+            // Stronger snap keeps the capsule pressed against sloped surfaces.
+            verticalVelocity = -2f;
+        }
         else
+        {
+            coyoteTimer  = Mathf.Max(0f, coyoteTimer - Time.deltaTime);
             verticalVelocity += gravity * Time.deltaTime;
+        }
+
+        bool canJump = coyoteTimer > 0f;
+
+        // Jump — accepts a mapped "Jump" action OR spacebar fallback
+        bool jumpPressed = (jumpAction != null && jumpAction.WasPressedThisFrame())
+                           || (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame);
+
+        if (jumpPressed && canJump)
+        {
+            verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
+            coyoteTimer      = 0f; // consume the window
+        }
 
         Vector3 velocity = moveDir * speed + Vector3.up * verticalVelocity;
         characterController.Move(velocity * Time.deltaTime);
+
+        bool isMoving = moveInput.magnitude > 0.1f && isGrounded;
+        armsController?.SetMoving(isMoving);
+        armsController?.SetSprinting(IsSprinting);
     }
 
     private void HandleCameraBob()

@@ -4,6 +4,8 @@ using UnityEngine.AI;
 /// <summary>
 /// The stalker monster. Uses NavMeshAgent to navigate the scene with a three-state FSM:
 /// Roaming, Chasing, and Attacking. Aggression scales with each note collected.
+/// Subscribes to FloorManager.OnFloorChanged to optionally pursue the player's floor via stairwell waypoints.
+/// Pushes a tension level to MusicManager each frame based on current state.
 /// </summary>
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(MonsterDetection))]
@@ -25,11 +27,18 @@ public class MonsterAI : MonoBehaviour
     [SerializeField] private float sanityDrainRate = 0.08f;
     [SerializeField] private float sanityRestoreRate = 0.02f;
 
+    [Header("Multi-Floor")]
+    [Tooltip("One waypoint per floor transition (stairwell entry points). Index maps to floor number + 1, matching FloorManager.")]
+    [SerializeField] private Transform[] stairwellWaypoints;
+    [Tooltip("Probability (0–1) that the monster will move toward the player's floor when OnFloorChanged fires.")]
+    [SerializeField] private float floorChaseProbability = 0.5f;
+
     private NavMeshAgent navMeshAgent;
     private MonsterDetection detection;
     private Transform playerTransform;
 
     private int notesCollected = 0;
+    private int totalNotes = 8;
     private Vector3 currentWaypoint;
 
     private void Awake()
@@ -46,6 +55,32 @@ public class MonsterAI : MonoBehaviour
 
         navMeshAgent.speed = baseSpeed;
         SetNewRoamWaypoint();
+
+        if (NoteCollectionManager.Instance != null)
+            totalNotes = NoteCollectionManager.Instance.TotalNotes;
+
+        if (FloorManager.Instance != null)
+            FloorManager.Instance.OnFloorChanged += OnPlayerFloorChanged;
+    }
+
+    private void OnDestroy()
+    {
+        if (FloorManager.Instance != null)
+            FloorManager.Instance.OnFloorChanged -= OnPlayerFloorChanged;
+    }
+
+    private void OnPlayerFloorChanged(int newFloor)
+    {
+        if (CurrentState != MonsterState.Roaming) return;
+        if (stairwellWaypoints == null || stairwellWaypoints.Length == 0) return;
+
+        if (Random.value <= floorChaseProbability)
+        {
+            int waypointIndex = Mathf.Clamp(newFloor + 1, 0, stairwellWaypoints.Length - 1);
+            Transform target = stairwellWaypoints[waypointIndex];
+            if (target != null)
+                navMeshAgent.SetDestination(target.position);
+        }
     }
 
     private void Update()
@@ -68,6 +103,7 @@ public class MonsterAI : MonoBehaviour
 
         HandleAudio();
         HandleSanity();
+        PushTensionLevel();
     }
 
     private void UpdateRoaming()
@@ -153,10 +189,23 @@ public class MonsterAI : MonoBehaviour
     /// <summary>
     /// Called by GameManager when a note is collected. Increases speed and detection range.
     /// </summary>
-    public void OnNoteCollected(int totalNotes)
+    public void OnNoteCollected(int totalNotesCollected)
     {
-        notesCollected = totalNotes;
+        notesCollected = totalNotesCollected;
         navMeshAgent.speed = baseSpeed + notesCollected * speedIncrement;
         detection.ScaleDetectionRange(notesCollected);
+    }
+
+    private void PushTensionLevel()
+    {
+        float tension = CurrentState switch
+        {
+            MonsterState.Roaming   => 0f,
+            MonsterState.Chasing   => Mathf.Lerp(0.3f, 0.8f, (float)notesCollected / Mathf.Max(1, totalNotes)),
+            MonsterState.Attacking => 1f,
+            _                      => 0f
+        };
+
+        MusicManager.Instance?.SetTensionLevel(tension);
     }
 }

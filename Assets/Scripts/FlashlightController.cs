@@ -21,12 +21,16 @@ public class FlashlightController : MonoBehaviour
     private const float FlickerIntervalMin = 0.05f;
     private const float FlickerIntervalMax = 0.3f;
 
+    [Header("Arms")]
+    [SerializeField] private FPSArmsController armsController;
+
     public float BatteryLevel { get; private set; } = 1f;
     public bool IsOn { get; private set; } = true;
 
     private InputAction flashlightAction;
     private float defaultIntensity;
     private bool isFlickering = false;
+    private bool batteryWarningTriggered = false;
 
     private void Awake()
     {
@@ -67,6 +71,18 @@ public class FlashlightController : MonoBehaviour
             return;
         }
 
+        // Trigger low-battery warning once when crossing the threshold
+        if (BatteryLevel < FlickerThreshold && !batteryWarningTriggered)
+        {
+            batteryWarningTriggered = true;
+            UIManager.Instance?.SetBatteryWarning(true);
+        }
+        else if (BatteryLevel >= FlickerThreshold && batteryWarningTriggered)
+        {
+            batteryWarningTriggered = false;
+            UIManager.Instance?.SetBatteryWarning(false);
+        }
+
         if (BatteryLevel < FlickerThreshold && !isFlickering)
             StartCoroutine(FlickerCoroutine());
     }
@@ -78,6 +94,8 @@ public class FlashlightController : MonoBehaviour
         IsOn = !IsOn;
         if (flashlight != null)
             flashlight.enabled = IsOn;
+
+        armsController?.SetFlashlightOn(IsOn);
     }
 
     private void OnFlashlightToggle(InputAction.CallbackContext ctx) => Toggle();
