@@ -1,3 +1,4 @@
+using System.Collections;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -5,6 +6,7 @@ using UnityEngine.UI;
 /// <summary>
 /// Singleton that manages all UI panels: HUD, note display, pause menu, game over, and win screens.
 /// All panels are child GameObjects toggled via SetActive.
+/// Battery bar uses an Image with FillMethod set to Horizontal (fill amount 0–1).
 /// </summary>
 public class UIManager : MonoBehaviour
 {
@@ -13,8 +15,13 @@ public class UIManager : MonoBehaviour
     [Header("HUD")]
     [SerializeField] private GameObject hudPanel;
     [SerializeField] private TextMeshProUGUI noteCounterText;
-    [SerializeField] private Slider batteryBar;
+    [SerializeField] private Image batteryFillImage;
     [SerializeField] private GameObject interactPrompt;
+
+    [Header("Battery Warning")]
+    [SerializeField] private Color batteryWarningColor = new Color(1f, 0.25f, 0f);
+    [SerializeField] private Color batteryNormalColor  = Color.white;
+    [SerializeField] private float batteryPulseSpeed   = 2.5f;
 
     [Header("Note Display")]
     [SerializeField] private GameObject noteTextPanel;
@@ -24,6 +31,8 @@ public class UIManager : MonoBehaviour
     [SerializeField] private GameObject pauseMenuPanel;
     [SerializeField] private GameObject gameOverPanel;
     [SerializeField] private GameObject winPanel;
+
+    private Coroutine batteryPulseCoroutine;
 
     private void Awake()
     {
@@ -41,6 +50,9 @@ public class UIManager : MonoBehaviour
         interactPrompt?.SetActive(false);
         hudPanel?.SetActive(true);
         UpdateNoteCounter(0, NoteCollectionManager.Instance != null ? NoteCollectionManager.Instance.TotalNotes : 8);
+
+        if (batteryFillImage != null)
+            batteryFillImage.color = batteryNormalColor;
     }
 
     /// <summary>Updates the note counter label on the HUD.</summary>
@@ -50,11 +62,48 @@ public class UIManager : MonoBehaviour
             noteCounterText.text = $"Notes: {collected} / {total}";
     }
 
-    /// <summary>Updates the battery bar slider value (0–1).</summary>
+    /// <summary>
+    /// Updates the battery fill image amount (0–1).
+    /// The Image must have Image Type set to Filled with Fill Method Horizontal.
+    /// </summary>
     public void UpdateBatteryBar(float batteryLevel)
     {
-        if (batteryBar != null)
-            batteryBar.value = batteryLevel;
+        if (batteryFillImage != null)
+            batteryFillImage.fillAmount = Mathf.Clamp01(batteryLevel);
+    }
+
+    /// <summary>
+    /// Enables or disables the low-battery pulsing color warning on the battery fill image.
+    /// </summary>
+    public void SetBatteryWarning(bool active)
+    {
+        if (batteryFillImage == null) return;
+
+        if (active)
+        {
+            if (batteryPulseCoroutine == null)
+                batteryPulseCoroutine = StartCoroutine(BatteryPulseCoroutine());
+        }
+        else
+        {
+            if (batteryPulseCoroutine != null)
+            {
+                StopCoroutine(batteryPulseCoroutine);
+                batteryPulseCoroutine = null;
+            }
+            batteryFillImage.color = batteryNormalColor;
+        }
+    }
+
+    private IEnumerator BatteryPulseCoroutine()
+    {
+        while (true)
+        {
+            float t = (Mathf.Sin(Time.unscaledTime * batteryPulseSpeed) + 1f) * 0.5f;
+            if (batteryFillImage != null)
+                batteryFillImage.color = Color.Lerp(batteryNormalColor, batteryWarningColor, t);
+            yield return null;
+        }
     }
 
     /// <summary>Displays the note content panel with the given text.</summary>
